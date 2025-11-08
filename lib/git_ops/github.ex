@@ -33,10 +33,30 @@ defmodule GitOps.GitHub do
   Returns {:ok, user} if found, where user contains :username, :id, and :url.
   Returns {:error, reason} if not found or if there's an error.
   """
+  def fetch_user_from_api(nil) do
+    {:error, "Error making GitHub API request: No email address"}
+  end
+
   def fetch_user_from_api(email) do
     Application.ensure_all_started(:req)
 
-    if email do
+    if String.match?(email, ~r/@users.noreply.github.com$/) do
+      case Req.get("#{GitOps.Config.github_api_base_url()}/users/#{username_from_email(email)}") do
+        {:ok, %Req.Response{status: 200, body: user}} ->
+          {:ok,
+           %{
+             username: user["login"],
+             id: user["id"],
+             url: user["html_url"]
+           }}
+
+        {:ok, %Req.Response{status: status, body: body}} ->
+          {:error, "GitHub API request failed with status #{status}: #{inspect(body)}"}
+
+        {:error, reason} ->
+          {:error, "Error making GitHub API request: #{inspect(reason)}"}
+      end
+    else
       case Req.get("#{GitOps.Config.github_api_base_url()}/search/users",
              headers: github_headers(),
              params: [q: "#{email} in:email", per_page: 2]
@@ -99,5 +119,10 @@ defmodule GitOps.GitHub do
       "user-agent" => "Elixir.GitOps",
       "X-GitHub-Api-Version" => "2022-11-28"
     }
+  end
+
+  defp username_from_email(email) do
+    Regex.named_captures(~r/^(\d+\+){0,1}(?<username>\w+)@users.noreply.github.com$/, email)
+    |> Map.get("username")
   end
 end
